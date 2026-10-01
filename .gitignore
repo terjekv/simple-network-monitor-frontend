@@ -1,0 +1,22 @@
+node_modules
+dist
+.vite
+*.local
+.DS_Store
+
+# Keep credentials and operational state out of this public project.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
+*.db
+*.db-*
+*.sqlite*
+
+/test-results/
+/backend/

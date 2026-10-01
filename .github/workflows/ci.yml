@@ -1,0 +1,61 @@
+name: Frontend CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '37 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --audit-level=low
+      - name: Lint workflows
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: Validate pinned backend revision
+        if: vars.SNM_BACKEND_REF != ''
+        env:
+          BACKEND_REF: ${{ vars.SNM_BACKEND_REF }}
+        run: '[[ "$BACKEND_REF" =~ ^[0-9a-fA-F]{40}$ ]]'
+      - uses: actions/checkout@v7
+        if: vars.SNM_BACKEND_REF != ''
+        with:
+          repository: ${{ vars.SNM_BACKEND_REPOSITORY || format('{0}/simple-network-monitor', github.repository_owner) }}
+          ref: ${{ vars.SNM_BACKEND_REF }}
+          path: backend
+          persist-credentials: false
+      - name: Run combined checks against pinned backend
+        if: vars.SNM_BACKEND_REF != ''
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+          npx playwright install --with-deps chromium
+          bash backend/scripts/check-projects.sh "$GITHUB_WORKSPACE"
+  codeql:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript,actions
+      - uses: github/codeql-action/analyze@v4
