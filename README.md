@@ -98,6 +98,14 @@ npm run lint
 
 ## Reliability and shared verification
 
+The dashboard is compatible with backend
+[v0.0.3](https://github.com/terjekv/simple-network-monitor/releases/tag/v0.0.3).
+It uses `/v1/inventory/hosts` and accepts the added `tcp` observations while
+continuing to display ICMP reachability and usage independently. TCP checks
+are available in the backend API and Prometheus `/metrics`; the dashboard
+does not yet display them. Back up the backend database before upgrading to
+schema v3; rollback requires the pre-upgrade backup.
+
 Use Node 24 or later. Both proxies allow only known read-only API paths on one
 fixed backend origin, reject redirects and malformed paths, bound responses to
 16 MiB, and enforce a 15-second deadline and 16 concurrent upstream requests.
@@ -119,7 +127,9 @@ from this checkout after installing Chromium with `npx playwright install chromi
 This runs locked builds, tests, lint, audits, and the real backend/proxy/browser
 fixture. `npm test` includes shared proxy attack tests and live-shaped component
 fixtures. `scripts/check-pair.mjs` records desktop/mobile screenshots and local
-1/10/50-viewer measurements in ignored `test-results/`.
+1/10/50-viewer measurements in ignored `test-results/`, along with the backend
+version, database schema, and frontend revision. Its 502-host fixture includes
+named TCP checks with all network probes disabled.
 
 CI runs npm tests, lint (including ESM), build, audit, workflow lint, and CodeQL.
 Dependabot covers npm and Actions. Set `SNM_BACKEND_REF` to the full SHA of the
