@@ -199,3 +199,47 @@ it('rejects index symlinks on both direct and SPA fallback requests', async () =
     await rm(outside, { force: true })
   }
 })
+
+it.each([
+  '/v1/history?from=1&to=10000',
+  '/v1/history/events?from=1&to=10000',
+  '/v1/history/samples?from=1&to=10000',
+  '/v1/system/maintenance',
+])('protects read-only history and maintenance route %s', async (path) => {
+  let calls = 0
+  const backend = await listen(
+    http.createServer((req, res) => {
+      calls++
+      expect(req.url).toBe(path)
+      res.setHeader('Content-Type', 'application/json')
+      res.end('{}')
+    }),
+  )
+  const origin = await listen(
+    createFrontendServer({
+      apiUrl: backend,
+      apiToken: 'fake-backend',
+      accessToken: 'fake-visitor',
+    }),
+  )
+  expect((await request(origin, `/snm-api${path}`)).status).toBe(401)
+  expect(
+    (
+      await request(
+        origin,
+        `/snm-api${path}`,
+        { Authorization: 'Bearer fake-visitor' },
+        'POST',
+      )
+    ).status,
+  ).toBe(405)
+  expect(calls).toBe(0)
+  expect(
+    (
+      await request(origin, `/snm-api${path}`, {
+        Authorization: 'Bearer fake-visitor',
+      })
+    ).status,
+  ).toBe(200)
+  expect(calls).toBe(1)
+})

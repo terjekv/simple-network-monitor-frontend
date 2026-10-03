@@ -10,7 +10,8 @@ import {
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { Host } from './types'
 const mocked = vi.hoisted(() => ({ hosts: vi.fn(), history: vi.fn() }))
-vi.mock('./api', () => ({
+vi.mock('./api', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./api')>(),
   fetchHosts: mocked.hosts,
   fetchHistory: mocked.history,
 }))

@@ -98,13 +98,13 @@ npm run lint
 
 ## Reliability and shared verification
 
-The dashboard is compatible with backend
-[v0.0.3](https://github.com/terjekv/simple-network-monitor/releases/tag/v0.0.3).
-It uses `/v1/inventory/hosts` and accepts the added `tcp` observations while
-continuing to display ICMP reachability and usage independently. TCP checks
-are available in the backend API and Prometheus `/metrics`; the dashboard
-does not yet display them. Back up the backend database before upgrading to
-schema v3; rollback requires the pre-upgrade backup.
+The historical dashboard requires backend
+[v0.0.4](https://github.com/terjekv/simple-network-monitor/releases/tag/v0.0.4)
+with schema v4. It uses paged inventory and the new history/maintenance APIs for
+ICMP/TCP availability, latency, and usage charts. Older backends can still provide
+inventory but cannot supply these new views. Back up the backend database before
+upgrading; rollback requires restoring the pre-upgrade backup. Existing history
+remains in the legacy endpoints, while chart observations begin after upgrade.
 
 Use Node 24 or later. Both proxies allow only known read-only API paths on one
 fixed backend origin, reject redirects and malformed paths, bound responses to
@@ -138,3 +138,37 @@ coordinated backend commit to enable combined checks on CI and weekly runs;
 The backend's corresponding `SNM_FRONTEND_REF` pins this repository's commit.
 These variables deliberately have no moving-branch default. Publish the two
 commits first, then configure the revision pair and require the resulting jobs.
+
+## Historical operations view
+
+The cobalt/ink design uses a responsive top navigation, Inter for the interface,
+and IBM Plex Mono for measurements (system font fallbacks work without network
+access). It preserves host search, room skipping, filters, configurable fields,
+CSV export, settings, and light/dark themes.
+
+Overview includes real ICMP/TCP availability and latency, approximate p95 latency,
+and duration-weighted users per observed host. Select 24 hours, 7/30 days, 1/3 years,
+or a custom UTC range. Compare groups or combine their union without counting an
+overlapping host twice. Group membership is historical, so past charts are stable
+when the current inventory changes. The picker accepts former group names too.
+Click a group in the top strip to scope its chart and current inventory. Host
+details include their own charts.
+
+Use the chart slider, hover readout, legend toggles, or accessible data table to
+inspect observations. Resolution and coverage are explicit; missing observations
+remain gaps. The selected window ends at the time it was chosen; **Latest** moves
+it to now. Polling refreshes data within that window, pauses in hidden tabs, and
+backs off failures. The observed-change feed supports pagination within the fixed
+window. Live API failures never fall back to illustrative data. Demo history is
+clearly labeled and has no pretend maintenance status.
+
+Maintenance shows database/reusable/WAL sizes, pending duration spans, task status,
+last success, next run, duration, and failures. It is read-only. The backend owns
+scheduling and retention; there is no browser timer performing database cleanup.
+Existing databases may need the backend's offline `--compact-database` command to
+enable incremental reclamation. See the backend's `docs/history-maintenance.md`.
+
+This feature requires the paired backend with schema v4 and these authenticated
+GET routes: `/v1/history`, `/v1/history/events`, `/v1/history/samples`, and
+`/v1/system/maintenance`. Both Vite and production use the shared, read-only
+proxy allowlist. No additional environment variables or runtime services are needed.

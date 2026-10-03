@@ -1,3 +1,4 @@
+import { HistoryPanel } from './HistoryPanel'
 import { useDialog } from './useDialog'
 import { usageValue } from './model'
 import {
@@ -25,6 +26,7 @@ import { getRoom, formatAge, statusLabel } from './model'
 import { StatusDot } from './Common'
 export function HostDrawer({
   host,
+  settings,
   history,
   historyLoading,
   historyError,
@@ -33,6 +35,7 @@ export function HostDrawer({
   onCopy,
 }: {
   host: Host
+  settings: ConnectionSettings
   history: Transition[]
   historyLoading: boolean
   historyError: string | null
@@ -108,6 +111,12 @@ export function HostDrawer({
         </div>
 
         <div className="drawer-body">
+          <HistoryPanel
+            key={host.id}
+            settings={settings}
+            availableGroups={host.groups}
+            hostId={host.id}
+          />
           <section className="drawer-section">
             <div className="section-heading">
               <div>

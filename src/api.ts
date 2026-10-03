@@ -176,3 +176,131 @@ export async function fetchHistory(
     throw new Error('Monitor returned invalid history')
   return body as Transition[]
 }
+
+const finite = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+const nullableNumber = (value: unknown) => value === null || finite(value)
+export function validateSeries(
+  value: unknown,
+): import('./historyTypes').HistoryResponse {
+  if (
+    !object(value) ||
+    ![
+      'from_ms',
+      'to_ms',
+      'resolution_seconds',
+      'source_resolution_seconds',
+    ].every((k) => finite(value[k])) ||
+    !nullableNumber(value.available_from_ms) ||
+    typeof value.membership !== 'string' ||
+    !Array.isArray(value.series) ||
+    value.series.length > 16 ||
+    !value.series.every(
+      (s) =>
+        object(s) &&
+        typeof s.id === 'string' &&
+        typeof s.label === 'string' &&
+        Array.isArray(s.buckets) &&
+        s.buckets.length <= 1000 &&
+        s.buckets.every(
+          (b) =>
+            object(b) &&
+            ['start_ms', 'end_ms', 'eligible_ms'].every((k) => finite(b[k])) &&
+            nullableNumber(b.latency_p95_ms) &&
+            object(b.stats) &&
+            [
+              'samples',
+              'successful_samples',
+              'latency_count',
+              'latency_sum_ms',
+              'up_ms',
+              'down_ms',
+              'usage_observed_ms',
+              'console_user_ms',
+              'remote_user_ms',
+            ].every((k) => finite((b.stats as Record<string, unknown>)[k])) &&
+            nullableNumber(b.stats.latency_min_ms) &&
+            nullableNumber(b.stats.latency_max_ms) &&
+            Array.isArray(b.stats.latency_histogram) &&
+            b.stats.latency_histogram.length === 17 &&
+            b.stats.latency_histogram.every(count),
+        ),
+    )
+  )
+    throw new Error('Monitor returned invalid chart data')
+  return value as unknown as import('./historyTypes').HistoryResponse
+}
+export function validateEvents(
+  value: unknown,
+): import('./historyTypes').HistoryEvents {
+  if (
+    !object(value) ||
+    !nullableNumber(value.next_before) ||
+    !Array.isArray(value.events) ||
+    value.events.length > 1000 ||
+    !value.events.every(
+      (e) =>
+        object(e) &&
+        count(e.id) &&
+        finite(e.at_ms) &&
+        ['host_id', 'name', 'module', 'check_id'].every(
+          (k) => typeof e[k] === 'string',
+        ) &&
+        Array.isArray(e.groups) &&
+        e.groups.every((g) => typeof g === 'string') &&
+        nullableString(e.previous_state) &&
+        object(e.observation) &&
+        status(e.observation.state) &&
+        typeof e.observation.success === 'boolean' &&
+        ['latency_ms', 'console_users', 'remote_users'].every((k) =>
+          nullableNumber((e.observation as Record<string, unknown>)[k]),
+        ) &&
+        nullableString(e.observation.error),
+    )
+  )
+    throw new Error('Monitor returned invalid event data')
+  return value as unknown as import('./historyTypes').HistoryEvents
+}
+export function validateMaintenance(
+  value: unknown,
+): import('./historyTypes').MaintenanceStatus {
+  if (
+    !object(value) ||
+    !object(value.database) ||
+    !['allocated_bytes', 'reusable_bytes', 'wal_bytes', 'pending_spans'].every(
+      (k) => finite((value.database as Record<string, unknown>)[k]),
+    ) ||
+    typeof value.database.incremental_vacuum !== 'boolean' ||
+    !nullableNumber(value.database.oldest_pending_ms) ||
+    !Array.isArray(value.jobs) ||
+    !value.jobs.every(
+      (j) =>
+        object(j) &&
+        typeof j.id === 'string' &&
+        typeof j.status === 'string' &&
+        ['last_started_ms', 'last_success_ms', 'duration_ms'].every((k) =>
+          nullableNumber(j[k]),
+        ) &&
+        ['next_run_ms', 'work_done', 'failures'].every((k) => finite(j[k])) &&
+        nullableString(j.message),
+    )
+  )
+    throw new Error('Monitor returned invalid maintenance data')
+  return value as unknown as import('./historyTypes').MaintenanceStatus
+}
+export async function fetchMonitorData<T>(
+  settings: ConnectionSettings,
+  path: string,
+  validate: (value: unknown) => T,
+  signal: AbortSignal,
+): Promise<T> {
+  const response = await fetch(`${API_PREFIX}${path}`, {
+    headers: headersFor(settings.token),
+    signal: deadline(signal),
+  })
+  if (!response.ok)
+    throw new Error(
+      await responseError(response, 'Could not load monitor data'),
+    )
+  return validate(await response.json())
+}

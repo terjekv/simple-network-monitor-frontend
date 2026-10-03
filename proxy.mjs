@@ -147,7 +147,7 @@ export function createApiMiddleware({
         return
       }
       if (
-        !/^\/snm-api\/(?:healthz|readyz|v1\/(?:inventory\/hosts|hosts(?:\/[A-Za-z0-9_.-]+(?:\/history|\/usage\/(?:history|samples))?)?|usage|modules|namespaces))$/.test(
+        !/^\/snm-api\/(?:healthz|readyz|v1\/(?:history(?:\/(?:events|samples))?|system\/maintenance|inventory\/hosts|hosts(?:\/[A-Za-z0-9_.-]+(?:\/history|\/usage\/(?:history|samples))?)?|usage|modules|namespaces))$/.test(
           url.pathname,
         )
       ) {

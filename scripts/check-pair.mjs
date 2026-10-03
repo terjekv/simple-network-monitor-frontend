@@ -74,6 +74,63 @@ try {
   db.prepare(
     'INSERT INTO latest_usage(host_id,collected_at,console_users,remote_users,status,error) VALUES(?,?,?,?,?,?)',
   ).run('host-00000', now, null, null, 'error', 'fake collection error')
+  // Seed historical observations directly: probes remain disabled throughout this test.
+  const endMs = Date.now() - 60000
+  const startMs = Math.floor((endMs - 3600000) / 300000) * 300000
+  const epoch = db.prepare(
+    'INSERT INTO history_epochs(host_id,name,groups_json,module,check_id,signature,started_ms,ended_ms,freshness_ms) VALUES (?,?,?,?,?,?,?,?,?)',
+  )
+  const bucket = db.prepare(
+    'INSERT INTO history_buckets(epoch_id,resolution,start_ms,stats) VALUES (?,?,?,?)',
+  )
+  const event = db.prepare(
+    'INSERT INTO history_events(epoch_id,at_ms,previous_state,observation) VALUES (?,?,?,?)',
+  )
+  for (let h = 0; h < 2; h++) {
+    const id = Number(
+      epoch.run(
+        `host-0000${h}`,
+        `host-${h}.example`,
+        JSON.stringify(h ? ['example', 'secondary'] : ['example']),
+        'icmp',
+        '',
+        'fake-historical-identity',
+        startMs,
+        endMs,
+        61000,
+      ).lastInsertRowid,
+    )
+    for (let i = 0; i < 10; i++) {
+      const stats = {
+        samples: 10,
+        successful_samples: 9,
+        latency_count: 9,
+        latency_sum_ms: 45,
+        latency_min_ms: 3,
+        latency_max_ms: 7,
+        latency_histogram: [0, 0, 0, 0, 9, ...Array(12).fill(0)],
+        up_ms: 270000,
+        down_ms: 30000,
+        usage_observed_ms: 0,
+        console_user_ms: 0,
+        remote_user_ms: 0,
+      }
+      bucket.run(id, 300, startMs + i * 300000, JSON.stringify(stats))
+    }
+    event.run(
+      id,
+      startMs,
+      'up',
+      JSON.stringify({
+        state: 'down',
+        success: false,
+        latency_ms: null,
+        console_users: null,
+        remote_users: null,
+        error: 'fake timeout',
+      }),
+    )
+  }
   frontend = createFrontendServer({
     apiUrl: backendOrigin,
     apiToken: 'fake-backend-token',
@@ -85,6 +142,37 @@ try {
   assert.equal((await fetch(`${backendOrigin}/v1/hosts`)).status, 401)
   assert.equal((await fetch(`${origin}/snm-api/v1/hosts`)).status, 401)
   const headers = { Authorization: 'Bearer fake-visitor-token' }
+  const historyQuery = `from=${startMs}&to=${endMs}&groups=example,secondary`
+  const actualHistory = await fetch(
+    `${origin}/snm-api/v1/history?${historyQuery}`,
+    { headers },
+  )
+  assert.equal(actualHistory.status, 200)
+  const chart = await actualHistory.json()
+  assert.equal(chart.series.length, 1)
+  assert.equal(
+    chart.series[0].buckets.reduce((n, b) => n + b.stats.samples, 0),
+    200,
+    'group unions must not double count',
+  )
+  assert.equal(chart.series[0].buckets[0].stats.up_ms, 540000)
+  const maintenanceResponse = await fetch(
+    `${origin}/snm-api/v1/system/maintenance`,
+    { headers },
+  )
+  assert.equal(maintenanceResponse.status, 200)
+  const maintenance = await maintenanceResponse.json()
+  assert.equal(maintenance.jobs.length, 6)
+  assert.equal(maintenance.database.incremental_vacuum, true)
+  assert.throws(
+    () =>
+      execFileSync(
+        binary,
+        ['--config', path.join(fixture, 'monitor.toml'), '--compact-database'],
+        { stdio: 'pipe' },
+      ),
+    'online compaction must be refused',
+  )
   const pageHost = await fetch(`${origin}/snm-api/v1/hosts/page`, { headers })
   assert.equal(pageHost.status, 200)
   assert.equal((await pageHost.json()).id, 'page')
@@ -111,9 +199,15 @@ try {
   assert.ok(etag)
   const page = await first.json()
   assert.equal(page.hosts.length, 100)
-  assert.deepEqual(page.hosts[0].tcp, [{
-    id: 'web', port: 443, enabled: false, stale: true, observation: null,
-  }])
+  assert.deepEqual(page.hosts[0].tcp, [
+    {
+      id: 'web',
+      port: 443,
+      enabled: false,
+      stale: true,
+      observation: null,
+    },
+  ])
   assert.ok(page.next_after)
   assert.equal(
     (
@@ -124,7 +218,9 @@ try {
     304,
   )
   browser = await chromium.launch({ headless: true })
-  const tab = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
+  const tab = await browser.newPage({
+    viewport: { width: 1440, height: 1000 },
+  })
   // External fonts are cosmetic and are kept out of the deterministic test.
   await tab.route('https://fonts.**/*', (route) =>
     route.fulfill({ status: 200, body: '' }),
@@ -137,12 +233,32 @@ try {
     .getByLabel('Access token', { exact: true })
     .fill('fake-visitor-token')
   await tab.getByRole('button', { name: 'Save & connect' }).click()
+  await tab.getByRole('img', { name: /Availability history/ }).waitFor()
+  await tab.getByText('90.00%', { exact: false }).first().waitFor()
+  await tab.getByRole('button', { name: 'By group', exact: true }).click()
+  await tab.getByRole('button', { name: 'secondary', exact: true }).waitFor()
+  await tab.getByRole('button', { name: 'Maintenance', exact: true }).click()
+  await tab.getByRole('heading', { name: 'Database & maintenance' }).waitFor()
+  await tab
+    .getByText('Incremental space reclamation enabled', { exact: true })
+    .waitFor()
+  await tab.screenshot({
+    path: path.join(output, 'pair-maintenance.png'),
+    fullPage: true,
+  })
+  await tab.getByRole('button', { name: 'Overview', exact: true }).click()
   await tab
     .getByPlaceholder('Search hosts, IPs, rooms or groups')
     .fill('host-0.example')
-  await tab.getByText('host-0.example', { exact: true }).waitFor()
+  await tab
+    .locator('.host-row')
+    .getByText('host-0.example', { exact: true })
+    .waitFor()
   assert.ok((await tab.locator('.host-row').count()) <= 100)
-  await tab.getByText('host-0.example', { exact: true }).click()
+  await tab
+    .locator('.host-row')
+    .getByText('host-0.example', { exact: true })
+    .click()
   await tab.getByRole('dialog').waitFor()
   assert.ok(
     await tab
@@ -172,7 +288,10 @@ try {
   )
   await tab.getByRole('button', { name: 'Refresh', exact: true }).click()
   await refreshed
-  await tab.getByText('host-0.example', { exact: true }).click()
+  await tab
+    .locator('.host-row')
+    .getByText('host-0.example', { exact: true })
+    .click()
   await tab.getByText(/Last known: Online/).waitFor()
   await tab.keyboard.press('Escape')
   assert.ok(
@@ -180,24 +299,50 @@ try {
       await tab.evaluate(() => localStorage.getItem('snm.connection'))
     ).includes('fake-visitor-token'),
   )
+  await tab.getByRole('button', { name: 'Overview', exact: true }).click()
+  await tab.getByRole('img', { name: /Availability history/ }).waitFor()
   await tab.screenshot({
     path: path.join(output, 'pair-desktop.png'),
     fullPage: true,
   })
   await tab.setViewportSize({ width: 390, height: 844 })
-  await tab.waitForFunction(
-    () => document.querySelector('.sidebar').getBoundingClientRect().right <= 0,
-  )
-  assert.ok(
-    await tab.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-    'Mobile document overflows viewport',
-  )
+  await tab.getByRole('button', { name: 'Overview', exact: true }).click()
+  await tab.getByRole('img', { name: /Availability history/ }).waitFor()
   await tab.screenshot({
     path: path.join(output, 'pair-mobile.png'),
     fullPage: true,
   })
+  const layout = await tab.evaluate(() => ({
+    width: innerWidth,
+    document: document.documentElement.scrollWidth,
+    overflow: [...document.querySelectorAll('body *')]
+      .map((e) => ({
+        tag: e.tagName,
+        cls: e.className,
+        right: e.getBoundingClientRect().right,
+        width: e.getBoundingClientRect().width,
+      }))
+      .filter((e) => e.right > innerWidth + 1)
+      .slice(0, 12),
+  }))
+  assert.ok(
+    layout.document <= layout.width,
+    `Mobile document overflows viewport: ${JSON.stringify(layout)}`,
+  )
+  await tab.getByRole('button', { name: 'Use dark theme' }).click()
+  await tab.getByRole('button', { name: 'By group', exact: true }).click()
+  await tab.getByRole('button', { name: 'secondary', exact: true }).waitFor()
+  await tab.screenshot({
+    path: path.join(output, 'pair-mobile-dark.png'),
+    fullPage: true,
+  })
+  assert.ok(
+    await tab.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+    'Dark comparison view overflows',
+  )
+  await tab.getByRole('button', { name: 'Use light theme' }).click()
   assert.deepEqual(errors, [])
   const benchmark = []
   for (const viewers of [1, 10, 50]) {
@@ -210,7 +355,11 @@ try {
         )
         const bytes = (await response.arrayBuffer()).byteLength
         assert.ok([200, 503].includes(response.status))
-        return { ms: performance.now() - start, bytes, status: response.status }
+        return {
+          ms: performance.now() - start,
+          bytes,
+          status: response.status,
+        }
       }),
     )
     results.sort((a, b) => a.ms - b.ms)
