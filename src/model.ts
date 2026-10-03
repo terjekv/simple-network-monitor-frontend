@@ -295,3 +295,40 @@ export function detectGroups(hosts: Host[]) {
       }),
   )
 }
+
+export function historyValue(
+  bucket: import('./historyTypes').HistoryBucket,
+  metric: import('./historyTypes').HistoryMetric,
+): number | null {
+  const s = bucket.stats
+  if (metric === 'availability')
+    return s.up_ms + s.down_ms ? (100 * s.up_ms) / (s.up_ms + s.down_ms) : null
+  if (metric === 'latency')
+    return s.latency_count ? s.latency_sum_ms / s.latency_count : null
+  if (metric === 'p95') return bucket.latency_p95_ms
+  return s.usage_observed_ms
+    ? (s.console_user_ms + s.remote_user_ms) / s.usage_observed_ms
+    : null
+}
+export function historyCoverage(
+  bucket: import('./historyTypes').HistoryBucket,
+  usage = false,
+): number {
+  return bucket.eligible_ms
+    ? Math.min(
+        100,
+        (100 *
+          (usage
+            ? bucket.stats.usage_observed_ms
+            : bucket.stats.up_ms + bucket.stats.down_ms)) /
+          bucket.eligible_ms,
+      )
+    : 0
+}
+
+export const metricNames = {
+  availability: 'Availability',
+  latency: 'Mean latency',
+  p95: 'Approx. p95 latency',
+  users: 'Users per observed host',
+}
