@@ -13,6 +13,9 @@ import { createFrontendServer } from '../server.mjs'
 
 const binary = process.env.SNM_BACKEND_BIN
 assert.ok(binary, 'Set SNM_BACKEND_BIN to the backend executable')
+const backendVersion = execFileSync(binary, ['--version'], {
+  encoding: 'utf8',
+}).trim()
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'snm-pair-'))
 const output = path.resolve('test-results')
 await mkdir(output, { recursive: true })
@@ -26,14 +29,14 @@ const database = path.join(fixture, 'state.db')
 const inventory = Array.from(
   { length: Number(process.env.SNM_TEST_HOSTS || 501) },
   (_, index) =>
-    ` {id="host-${String(index).padStart(5, '0')}",name="host-${index}.example",address="192.0.2.1",groups=["example"],metadata={room="Room example"}}`,
+    ` {id="host-${String(index).padStart(5, '0')}",name="host-${index}.example",address="192.0.2.1",groups=["example"],metadata={room="Room example"},modules={tcp={checks=[{id="web",port=443}]}}}`,
 )
 inventory.push(
   ' {id="page",name="page.example",address="192.0.2.2",groups=["example"],metadata={room="Room example"}}',
 )
 await writeFile(
   path.join(fixture, 'monitor.toml'),
-  `bind="127.0.0.1:${port}"\napi_workers=2\ndatabase_path=${JSON.stringify(database)}\napi_token="fake-backend-token"\nhosts=[\n${inventory.join(',\n')}\n]\n[modules.icmp]\nenabled=false\n`,
+  `bind="127.0.0.1:${port}"\napi_workers=2\ndatabase_path=${JSON.stringify(database)}\napi_token="fake-backend-token"\nhosts=[\n${inventory.join(',\n')}\n]\n[modules.icmp]\nenabled=false\n[modules.usage]\nenabled=false\n[modules.tcp]\nenabled=false\n`,
 )
 const backend = spawn(
   binary,
@@ -108,6 +111,9 @@ try {
   assert.ok(etag)
   const page = await first.json()
   assert.equal(page.hosts.length, 100)
+  assert.deepEqual(page.hosts[0].tcp, [{
+    id: 'web', port: 443, enabled: false, stale: true, observation: null,
+  }])
   assert.ok(page.next_after)
   assert.equal(
     (
@@ -229,6 +235,8 @@ try {
   }
   const evidence = {
     backendBinary: binary,
+    backendVersion,
+    databaseSchema: db.prepare('PRAGMA user_version').get().user_version,
     frontendRevision,
     hosts: inventory.length,
     benchmark,

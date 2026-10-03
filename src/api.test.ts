@@ -16,6 +16,38 @@ const host = {
   usage: null,
 }
 afterEach(() => vi.unstubAllGlobals())
+it('accepts v0.0.3 TCP observations without changing ICMP or usage state', async () => {
+  const currentHost = {
+    ...host,
+    icmp_enabled: false,
+    usage_enabled: false,
+    icmp_stale: true,
+    usage_stale: true,
+    tcp: [{
+      id: 'web',
+      port: 443,
+      enabled: true,
+      stale: false,
+      observation: {
+        observed_at: '2026-10-03T00:00:00Z',
+        success: true,
+        duration_seconds: 0.01,
+        error: null,
+      },
+    }],
+  }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+    Response.json({ hosts: [currentHost], next_after: null }),
+  ))
+  const hosts = await fetchHosts({
+    token: 'fake-v003-test',
+    demoMode: false,
+    refreshSeconds: 30,
+  })
+  expect(hosts).toEqual([currentHost])
+  expect(hosts[0].status).toBe('unknown')
+  expect(hosts[0].usage).toBeNull()
+})
 it('follows page cursors and reuses unchanged pages with conditional requests', async () => {
   const fetch = vi
     .fn()
